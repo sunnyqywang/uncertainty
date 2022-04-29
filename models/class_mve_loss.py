@@ -3,54 +3,56 @@ import torch.nn as nn
 import torch.nn.functional as F
 from TruncatedNormal import TruncatedNormal
 
-class LN_MVELoss(nn.Module):
-    # mean-variance loss with lognormal distribution
 
-    def __init__(self,):
+class MVELoss(nn.Module):
+    def __init__(self,dist):
         super().__init__()
-
-    def forward(self, output_mean, output_var, target):
-        mean = torch.flatten(output_mean)
-        std = torch.flatten(output_var)
+        self.dist = dist
+        
+    def forward(self, output_loc, output_scale=None, target=None):
+        
+        loc = torch.flatten(output_loc)
+        if output_scale is not None:
+            scale = torch.flatten(output_scale)
         t = torch.flatten(target)
         try:
-            dist = torch.distributions.log_normal.LogNormal(mean, std)
+            if self.dist == 'laplace':
+                d = torch.distributions.laplace.Laplace(loc, scale)
+                loss = d.log_prob(t)
+
+            elif self.dist == 'tnorm':
+                d = torch.distributions.normal.Normal(loc, scale)
+                prob0 = d.cdf(torch.Tensor([0]).to(target.device))
+                loss = d.log_prob(t) - torch.log(1-prob0)
+
+            elif self.dist == 'lognorm':
+                d = torch.distributions.log_normal.LogNormal(loc, scale)
+                loss = d.log_prob(t+0.000001)
+                
+            elif self.dist == 'poisson':
+                d = torch.distributions.poisson.Poisson(loc)
+                loss = d.log_prob(t)
+            
+            elif (self.dist == 'norm') | (self.dist == 'norm_homo'):
+                d = torch.distributions.normal.Normal(loc, scale)
+                loss = d.log_prob(t)
+                
+            else:
+                print("Dist error")
+                return 0
+                
         except:
-            print(mean)
-        loss = dist.log_prob(t+0.000001)
+            print(loc)
 
         if torch.sum(torch.isnan(loss)) != 0:
-                print(mean[torch.isnan(loss)][0])
-                print(std[torch.isnan(loss)][0])
-                print(t[torch.isnan(loss)][0])
+            print(loc[torch.isnan(loss)][0])
+            print(scale[torch.isnan(loss)][0])
+            print(t[torch.isnan(loss)][0])
+            
+#         if -loss.reshape(len(output_loc),-1) > 100:
+#         i = torch.argmax(-loss)
+#         print(loc[i].detach().cpu().numpy(),scale[i].detach().cpu().numpy(), t[i].detach().cpu().numpy(), loss[i].detach().cpu().numpy())
+#         print(torch.median(-loss))
         
         return -torch.sum(loss)
-
-
-class T_MVELoss(nn.Module):
-    # mean-variance loss with truncated normal (left at 0) distribution
-
-    def __init__(self,):
-        super().__init__()
-
-    def forward(self, output_mean, output_var, target):
-        mean = torch.flatten(output_mean)
-        std = torch.flatten(output_var)
-        t = torch.flatten(target)
-
-        try:
-            dist = torch.distributions.normal.Normal(mean, std)
-        except:
-            print('loss', mean)
-        prob0 = dist.cdf(torch.Tensor([0]).to(target.device))
-        loss = dist.log_prob(t) - torch.log(1-prob0)
-        '''
-        dist = TruncatedNormal(a=0, b=float("Inf"), loc=mean, scale=std)
-        loss = dist.log_prob(t)
-        '''
-        if torch.sum(torch.isnan(loss)) != 0:
-                print(mean[torch.isnan(loss)])
-                print(std[torch.isnan(loss)])
-                print(t[torch.isnan(loss)])
-
-        return -torch.sum(loss)
+        

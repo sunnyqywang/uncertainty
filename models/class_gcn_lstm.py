@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from layers import GraphConvolution
 
 class GCN_LSTM(nn.Module):
-    def __init__(self, meanonly, homo, nadj, nmode, nstation, ntime, ndemo, nhid_g, ngc, nhid_l, nlstm, nhid_fc, dropout):
+    def __init__(self, meanonly, homo, nadj, nmode, nstation, ntime, ndemo, nhid_g, ngc, nhid_l, nlstm, nhid_fc, dropout, std_starter=None):
         # meanonly: bool, whether output is mean only or mean and standard deviation
         # nmode: number of modes (features) in x (ridership immediately before)
         # nstation: number of spatial units
@@ -20,7 +20,7 @@ class GCN_LSTM(nn.Module):
         self.meanonly = meanonly
         if homo: # if homoskedastic, then only mean is produced by the convolutions
             self.meanonly = True
-            self.std = nn.Parameter(torch.tensor([1.0]), requires_grad=True)
+            self.std = nn.Parameter(std_starter, requires_grad=True)
         self.homo = homo
         self.nhid_g = nhid_g
         self.ntime = ntime
@@ -71,8 +71,8 @@ class GCN_LSTM(nn.Module):
         # layers bringing everything together
         self.final = nn.Linear(nhid_fc, nstation*mult)
 
-        if not meanonly:
-            # 1
+#         if (not self.meanonly) | (homo): # 220405 glitch
+        if (not self.meanonly):
             self.recent_on_history_var = nn.Linear(nhid_fc, nstation)
             self.weather_weights_var = nn.Parameter(torch.rand((ntime, 2*nstation)))
 
@@ -117,7 +117,8 @@ class GCN_LSTM(nn.Module):
         device = adj.device
 
         r_in = self._embed_x(x, adj, device)
-        
+#         print(r_in.view(batch_size, timesteps, -1)[0:5,:,:])
+
         # LSTM step by step
         '''
         h_t = torch.zeros(batch_size, self.nhid_g, dtype=torch.float32).to(device)
@@ -174,10 +175,13 @@ class GCN_LSTM(nn.Module):
             # History and Weather
             history = torch.squeeze(history)
             history_mean = history * recent_on_history_weights_mean
-
+    
             weather = weather.view(batch_size, 1, 2)
             weather_mean = torch.squeeze(torch.bmm(weather, torch.mm(qod, self.weather_weights_mean).view(batch_size, 2, stations)))
-            
+#             print(self.recent_on_history_mean(out)[0,:])
+#             print(self.recent_on_history_var(out)[0,:])
+#             print(out)
+
             if not self.meanonly:
                 recent_on_history_weights_var = torch.sigmoid(self.recent_on_history_var(out)).view(batch_size, stations)
                 history_var = history * recent_on_history_weights_var
@@ -193,23 +197,27 @@ class GCN_LSTM(nn.Module):
 
             out = self.final(out)
 
-            if self.meanonly:
+            if (self.meanonly)|(self.homo):
                 out = out.view(batch_size, -1, 1)
-                out_mean = F.relu(out[:,:,0]+history_mean+gcs_mean+weather_mean+los_mean)
+#                 out_mean = F.softplus(out[:,:,0]+history_mean+gcs_mean+weather_mean+los_mean)
+                out_mean = F.softplus(out[:,:,0]+gcs_mean+history_mean+weather_mean)
                 if i == 0:
                     final_out = out_mean
                 else:
                     final_out = torch.cat((final_out, out_mean), -1)
             else:
                 out = out.view(batch_size, -1, 2)
-                out_mean = F.relu(out[:,:,0]+gcs_mean+history_mean+los_mean+weather_mean)
+#                 out_mean = F.softplus(out[:,:,0]+gcs_mean+history_mean+los_mean+weather_mean)
+                out_mean = F.softplus(out[:,:,0]+gcs_mean+history_mean+weather_mean)
                 out_var = F.softplus(out[:,:,1]+gcs_var+history_var+weather_var)
                 current_out = torch.cat((out_mean, out_var), 0)
                 if i == 0:
                     final_out = current_out
                 else:
                     final_out = torch.cat((final_out, current_out), -1)
-
+#                 print(recent_on_history_weights_mean[0,:])
+#                 print(recent_on_history_weights_var[0,:])
+                
         if not return_components:
             if self.homo:
                 return final_out, F.softplus(self.std)

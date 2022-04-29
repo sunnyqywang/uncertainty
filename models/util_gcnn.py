@@ -1,9 +1,9 @@
 import sys
-sys.path.append("../")
+sys.path.append("process_data/")
 
 from class_dataset import CTA_Data
 from class_gcn_lstm import GCN_LSTM
-from class_mve_loss import T_MVELoss
+from class_mve_loss import MVELoss
 import util_eval
 
 import glob
@@ -254,48 +254,6 @@ def prepare_for_torch(device, train_extent, data, adj, spatial, downtown_filter,
     else:
         return  trainloader, trainloader_test, valloader, testloader, adj_torch, spatial_torch, y_train_eval, y_val_eval, y_test_eval
 
-def testset_output_gat(testloader, meanonly, net, criterion, adj, demo, device, n_time):
-    loss = 0
-    for i, data in enumerate(testloader, 0):
-
-        batch_x, batch_y, batch_history, batch_weather, batch_los, batch_qod = data
-        batch_x = batch_x.float()
-        batch_y = batch_y.float()
-        batch_size=len(batch_x)
-        batch_history = batch_history.float()
-        batch_qod = batch_qod.view(-1,1)        
-        batch_qod_onehot = torch.FloatTensor(batch_size, n_time)
-        batch_qod_onehot.zero_()
-        batch_qod_onehot.scatter_(1, batch_qod-6, 1)
-        batch_x, batch_y, batch_history, batch_weather, batch_los, batch_qod_onehot = batch_x.to(device),batch_y.to(device), batch_history.to(device),batch_weather.to(device), batch_los.to(device), batch_qod_onehot.to(device)
-
-        # forward
-        outputs = net(batch_x, adj, batch_history, demo, batch_weather, batch_los, batch_qod_onehot)
-
-        # loss
-        if meanonly:
-            loss += criterion(outputs, batch_y).item()
-        else:
-            loss += criterion(outputs[:batch_size,:], outputs[batch_size:,:], batch_y).item()
-
-        if meanonly:
-            if i == 0:
-                test_out_mean = outputs[:batch_size,:].cpu().detach().numpy()
-            else:
-                test_out_mean = np.concatenate((test_out_mean, outputs[:batch_size,:].cpu().detach().numpy()), axis=0)
-
-        else:
-            if i == 0:
-                test_out_mean = outputs[:batch_size,:].cpu().detach().numpy()
-                test_out_var = outputs[batch_size:,:].cpu().detach().numpy()
-            else:
-                test_out_mean = np.concatenate((test_out_mean, outputs[:batch_size,:].cpu().detach().numpy()), axis=0)
-                test_out_var = np.concatenate((test_out_var, outputs[batch_size:,:].cpu().detach().numpy()), axis=0)
-
-    if meanonly:
-        return test_out_mean,loss
-    else:
-        return test_out_mean, test_out_var, loss
 
 def testset_output_gcn(testloader, meanonly, homo, net, criterion, adj, demo, device, n_time, return_components=False):
     net.eval()
@@ -321,14 +279,14 @@ def testset_output_gcn(testloader, meanonly, homo, net, criterion, adj, demo, de
             outputs = net(batch_x, None, adj, batch_history, demo, batch_weather, batch_los, batch_qod_onehot, 1)
 
         # loss
-        if meanonly:
-            loss += criterion(outputs, batch_y).item()
+        if (meanonly) & (not homo):
+            loss += criterion(outputs, target=batch_y).item()
         elif homo:
             loss += criterion(outputs[0], outputs[1], batch_y).item()
         else:
             loss += criterion(outputs[:batch_size,:], outputs[batch_size:,:], batch_y).item()
 
-        if meanonly:
+        if (meanonly) & (not homo):
             if i == 0:
                 test_out_mean = outputs[:batch_size,:].cpu().detach().numpy()
             else:
@@ -336,10 +294,11 @@ def testset_output_gcn(testloader, meanonly, homo, net, criterion, adj, demo, de
 
         elif homo:
             if i == 0:
-                test_out_mean = outputs[0][:batch_size,:].cpu().detach().numpy()
-                test_out_var = outputs[1].cpu().detach().numpy()
+                test_out_mean = outputs[0].cpu().detach().numpy()
+                test_out_var = outputs[1].cpu().detach().numpy() 
             else:
-                test_out_mean = np.concatenate((test_out_mean, outputs[0][:batch_size,:].cpu().detach().numpy()), axis=0)
+                test_out_mean = np.concatenate((test_out_mean, outputs[0].cpu().detach().numpy()), axis=0)
+
         else:
             if i == 0:
                 test_out_mean = outputs[:batch_size,:].cpu().detach().numpy()
@@ -348,28 +307,29 @@ def testset_output_gcn(testloader, meanonly, homo, net, criterion, adj, demo, de
                 test_out_mean = np.concatenate((test_out_mean, outputs[:batch_size,:].cpu().detach().numpy()), axis=0)
                 test_out_var = np.concatenate((test_out_var, outputs[batch_size:,:].cpu().detach().numpy()), axis=0)
 
-    if meanonly:
+    if (meanonly) & (not homo):
         return test_out_mean, None, loss
     else:
         return test_out_mean, test_out_var, loss
 
-def load_model(project_dir, out_folder, period, train_extent, adj_type, predict_hzn, time_size, lookback, ii, n_modes, n_stations, n_time):
+def load_model(project_dir, save_dir, period, train_extent, adj_type, predict_hzn, time_size, lookback, ii, n_modes, n_stations, n_time, meanonly=False, homo=False):
     if type(adj_type) == str:
-         adj_type=adj_type.replace('_', '-')
-         nadj = adj_type.count('-')+1
+        adj_type=adj_type.replace('_', '-')
+        nadj = adj_type.count('-')+1
     else:
-         nadj = len(adj_type)
-         adj_type='-'.join(adj_type)
+        nadj = len(adj_type)
+        adj_type='-'.join(adj_type)
 
-    file = glob.glob(project_dir+"models/"+out_folder+"/"+period+"_"+train_extent+"_"+adj_type+"_"+
-            str(predict_hzn)+"_"+str(time_size)+"_"+str(lookback)+"_"+str(ii)+"_*.pt")
+    file = glob.glob(save_dir+"_"+str(ii)+"_*.pt")
 
     if len(file) == 0:
+        print(save_dir+"_"+str(ii)+"_*.pt")
         print("Model %d not saved." % (ii))
         return None
 
     try:
         assert len(file)==1
+#         print(file, 'loaded')
     except:
         print("Multiple Files Found!")
         for f in file:
@@ -381,22 +341,23 @@ def load_model(project_dir, out_folder, period, train_extent, adj_type, predict_
     else:
         (_,_,_,_,_,_,_,_,dropout,n_hid_units,nlstm,ngc,weight_decay) = saved['hyperparameters']
 
-    # assuming that meanonly and homoskedastic modelswill not be loaded
-    net = GCN_LSTM(meanonly=False, homo=False, nadj = nadj, nmode=n_modes, nstation=n_stations, ntime=n_time, ndemo=0,
+    # assuming that meanonly and homoskedastic models will not be loaded
+    net = GCN_LSTM(meanonly=meanonly, homo=homo, nadj = nadj, nmode=n_modes, nstation=n_stations, ntime=n_time, ndemo=0,
             nhid_g=n_hid_units, ngc=ngc, nhid_l=n_hid_units, nlstm=nlstm, 
             nhid_fc=n_hid_units, dropout=dropout)
+    
     net.load_state_dict(saved['model_state_dict'])
-
+    
     return net
  
 
-def ensemble(project_dir, out_folder, period, predict_hzn, time_size, lookback, ensemble_model_numbers, device, train_extent, adj_type, z, data, adj, spatial, downtown_filter):
+def ensemble(project_dir, save_dir, period, predict_hzn, time_size, lookback, ensemble_model_numbers, device, train_extent, adj_type, data, adj, spatial, downtown_filter, dist='norm'):
+    # only normal ensemble available
 
     n_time = 96//time_size-7
 
-    trainloader, trainloader_test, testloader, adj_torch, spatial_torch, y_train_eval, y_test_eval = \
-            prepare_for_torch(device, train_extent, data, adj, spatial, downtown_filter, adj_type, val=False)
-
+    trainloader, trainloader_test, valloader, testloader, adj_torch, spatial_torch, y_train_eval, y_val_eval, y_test_eval = \
+            prepare_for_torch(device, train_extent, data, adj, spatial, downtown_filter, adj_type, val=True)
     (num_train, _, _, n_modes) = data['x'][0].shape
     (num_test, _, _, _) = data['x'][-1].shape
     n_stations = adj_torch.shape[0]
@@ -406,63 +367,48 @@ def ensemble(project_dir, out_folder, period, predict_hzn, time_size, lookback, 
 
     mean_list = []
     std_list = []
-    mae_list = []
-    mse_list = []
-    picp_list = []
-    mpiw_list = []
+#     mae_list = []
+#     mse_list = []
+#     picp_list = []
+#     mpiw_list = []
     test_loss_list = []
-    u_list = []
-    ub_list = []
-    uv_list = []
-    uc_list = []
+#     u_list = []
+#     ub_list = []
+#     uv_list = []
+#     uc_list = []
     spatial_torch = None
 
     for ii in ensemble_model_numbers:
 
-        net = load_model(project_dir, out_folder, period, train_extent, adj_type, predict_hzn, time_size, lookback, ii, n_modes, n_stations, n_time)
+        net = load_model(project_dir, save_dir, period, train_extent, adj_type, predict_hzn, time_size, lookback, ii, n_modes, n_stations, n_time)
         
         if net is None:
             continue
 
-        criterion = T_MVELoss()
+        criterion = MVELoss(dist)
         net.eval()
-
-        '''
-        train_out_mean, train_out_std, train_loss = util_gcnn.testset_output_gcn(trainloader_test, False, net, criterion, 
-                                                                                 adj_torch, spatial_torch, device, n_time)
-        tr_mae, tr_mse, _, _, _ = util_eval.eval_mean(train_out_mean, y_train_eval, 'Train')
-        tr_u, tr_ub, tr_uv, tr_uc = util_eval.eval_theils(np.squeeze(train_out_mean), y_train, stdout = False)
-        tr_mpiw, tr_picp = util_eval.eval_pi(train_out_mean - z*train_out_std, train_out_mean + z*train_out_std, y_train_eval)
-        '''
 
         test_out_mean, test_out_std, test_loss = testset_output_gcn(testloader, False, False, net, criterion, 
                 adj_torch, spatial_torch, device, n_time)
-        mae, mse, _, _, _ = util_eval.eval_mean(test_out_mean, y_test_eval, 'Test')
-        u, ub, uv, uc = util_eval.eval_theils(np.squeeze(test_out_mean), y_test_eval, stdout = False)
-        mpiw, picp = util_eval.eval_pi(test_out_mean - z*test_out_std, test_out_mean + z*test_out_std, y_test_eval)
+#         mae, mse, _, _, _ = util_eval.eval_mean(test_out_mean, y_test_eval, 'Test')
+#         u, ub, uv, uc = util_eval.eval_theils(np.squeeze(test_out_mean), y_test_eval, stdout = False)
+#         mpiw, picp = util_eval.eval_pi(test_out_mean - z*test_out_std, test_out_mean + z*test_out_std, y_test_eval)
 
         mean_list.append(test_out_mean)
         std_list.append(test_out_std)
         test_loss_list.append(test_loss)
 
-        mae_list.append(mae)
-        mse_list.append(mse)
+#         mae_list.append(mae)
+#         mse_list.append(mse)
 
-        u_list.append(u)
-        ub_list.append(ub)
-        uv_list.append(uv)
-        uc_list.append(uc)
+#         u_list.append(u)
+#         ub_list.append(ub)
+#         uv_list.append(uv)
+#         uc_list.append(uc)
 
-        mpiw_list.append(mpiw)
-        picp_list.append(picp)
+#         mpiw_list.append(mpiw)
+#         picp_list.append(picp)
 
-    ## Fill in Missing U values (only for the first few runs where U not implemented)
-    # df.loc[(df['Period'] == period) & (df['Lookback'] == lookback) & (df['Adjacency']=='_'.join(adj_type)) & (np.isnan(df['u'])),'u'] = u_list
-    # df.loc[(df['Period'] == period) & (df['Lookback'] == lookback) & (df['Adjacency']=='_'.join(adj_type)) & (np.isnan(df['um'])),'um'] = ub_list
-    # df.loc[(df['Period'] == period) & (df['Lookback'] == lookback) & (df['Adjacency']=='_'.join(adj_type)) & (np.isnan(df['uc'])),'uc'] = uc_list
-    # df.loc[(df['Period'] == period) & (df['Lookback'] == lookback) & (df['Adjacency']=='_'.join(adj_type)) & (np.isnan(df['us'])),'us'] = uv_list
-
-    # df.to_csv(project_dir+"results/rail_catchment_mve_results.csv", index=False)
 
     # calculate ensembled stats                     
     test_ens_mean = np.mean(np.array(mean_list), axis=0)
@@ -470,5 +416,5 @@ def ensemble(project_dir, out_folder, period, predict_hzn, time_size, lookback, 
             + np.power(np.array(std_list),2), axis=0)\
             - np.power(test_ens_mean,2))
 
-    return data['ts'][1], y_test_eval, test_ens_mean, test_ens_std, mean_list, std_list
+    return data['ts'][-1], y_test_eval, test_ens_mean, test_ens_std, mean_list, std_list
 

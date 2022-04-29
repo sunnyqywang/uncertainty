@@ -25,10 +25,14 @@ class GraphAttention(Module):
 
         self.leakyrelu = nn.LeakyReLU(self.alpha)
 
-    def forward(self, h, adj):
+    def forward(self, h, adj=None):
 
         (N,S,_) = h.shape
-        # h.shape=(N,S,in_features) W.shape=(in_features,out_features*head) Wh.shape=(N,S,out_features*head)
+        # h.shape=(N,S,in_features) 
+        # W.shape=(in_features,out_features*head) 
+        # Wh.shape=(N,S,out_features*head)
+        
+        # node-wise feature transformation
         Wh = torch.matmul(h, self.W) 
 
         # a_input.shape=(N,S*S,2*out_features*head)
@@ -38,13 +42,20 @@ class GraphAttention(Module):
         # a_input.shape=(N,S,S,2*out_features*head) a.shape=(2*out_features*head,1) e.shape=(N,S,S)
         e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(3))
 
+        # fill e to have neighbours only
+        if adj is not None:
+            # 220405, if adj value less than 50% pct, treat it as 0
+            e = e.masked_fill(adj < torch.quantile(adj, 0.5), float('-inf'))        
+        
         # attention.shape=(N,S,S)
         attention = F.softmax(e, dim=2)
+        
+#         print(attention)
         # output.shape=(N,S,out_features*head)
         output = torch.matmul(attention, Wh)
         output = torch.stack(torch.split(output, torch.tensor(self.out_features), dim=2))
         # output.shape=(N,S,out_features)
-        output = F.elu(torch.mean(output, axis=0))
+        output = torch.mean(output, axis=0)
 
         return output
 

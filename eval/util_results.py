@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pickle as pkl
 
-from class_mve_loss import T_MVELoss
+from class_mve_loss import MVELoss
 from default_parameters import *
 import util_eval
 import util_gcnn

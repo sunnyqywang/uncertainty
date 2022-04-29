@@ -1,5 +1,51 @@
 import numpy as np
+from scipy.stats import poisson, norm, laplace, lognorm
 import torch
+
+def post_process_dist(dist, loc, scale):
+    
+    if dist == "lognorm":
+        out_predict = np.exp(loc - np.power(scale,2))
+#         out_std = np.mean(np.sqrt((np.exp(scale * scale)-1)*(np.exp(2*loc+scale * scale))))
+    elif dist == 'tnorm':
+        out_predict = loc
+#         out_std = np.mean(scale)
+    elif dist == 'laplace':
+        out_predict = loc
+#         out_std = np.mean(scale) * np.sqrt(2)
+    elif dist == 'poisson':
+        out_predict = loc
+#         out_std = np.sqrt(loc)
+    elif dist == 'norm':
+        out_predict = loc
+        
+        
+    return out_predict, None
+
+def post_process_pi(dist, loc, scale, z):
+    
+    if dist == "lognorm":
+#         predict = np.exp(loc - np.power(scale,2))
+#         lb = np.exp(predict - z*scale)
+#         ub = np.exp(predict + z*scale)
+        lb, ub = lognorm.interval(z, loc, scale)
+    elif dist == 'tnorm':
+#         lb = np.max([0, loc - z*scale])
+#         ub = loc + z*scale
+        lb, ub = norm.interval(z, loc, scale)
+        lb = lb * (lb>0)
+    elif dist == 'laplace':
+#         predict = loc
+#         lb = predict + scale * np.log(2*z)
+#         ub = predict - scale * np.log(2-2*(1-z))
+        lb, ub = laplace.interval(z, loc, scale)
+    elif dist == 'poisson':
+        predict = loc
+        lb,ub = poisson.interval(z, loc)   
+    elif dist == 'norm':
+        lb, ub = norm.interval(z, loc, scale)
+        
+    return lb, ub
 
 def eval_theils(modelled, target, stdout=False):
     modelled = modelled.flatten()
@@ -59,7 +105,6 @@ def eval_mean(modelled, target, dataset, stdout=False):
 
     return mae, mse, nz_mae, nz_mse, pct_nonzeros
 
- 
 
 def eval_nll(criterion, modelled, modelled_std, target, stdout=False):
     modelled = torch.tensor(modelled)

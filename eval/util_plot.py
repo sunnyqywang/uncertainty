@@ -48,6 +48,25 @@ class MidpointNormalize(colors.Normalize):
         x, y = [self.vmin, self.midpoint, self.vmax], [0, 0.5, 1]
         return np.ma.masked_array(np.interp(value, x, y), np.isnan(value))
 
+def plot_calibration(ax, p, p_hat, label, clr):
+
+    for a,b in zip(p, p_hat):
+        ax.scatter(a, b, c=clr, s=15)
+    ax.plot(p, p_hat, c=clr, label=label, linewidth=2)
+    
+    ax.plot(p, p, c='grey', linewidth=2)
+    ax.set_xticks(np.arange(0,1.1,0.2))
+    ax.set_yticks(np.arange(0,1.1,0.2))
+
+    ax.set_xlabel("Expected Quantile (Predicted)")
+    ax.set_ylabel("Observed Quantile (from Data")
+
+    ax.set_xlim([0,1])
+    ax.set_ylim([0,1])
+    ax.grid();
+    ax.legend();
+
+    return ax
 
 def plot_fit_res(test_y, test_out, test_res=None):
     # plot observed vs. fit 
@@ -124,7 +143,7 @@ def plot_pi_graph(ts_test, y_test, pred_test, pred_std, z, time_size, models, du
     et = np.min((len(ts_test), dur))
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(6*duration,5))
+        fig, ax = plt.subplots(figsize=(2.5*duration,2))
     else:
         fig = None
     for i in range(len(pred_test)):
@@ -166,7 +185,7 @@ def plot_pi_grid(ts_test, y_test, pred_test, pred_std, z, time_size, plot_cell=N
     plot_pi(ts=ts_test[st:et], true=y_test[:,plot_row, plot_col], pred=pred_test[:, plot_row, plot_col], pred_std=pred_std[:,plot_row,plot_col],time_size=time_size, z=z)
     
 
-def plot_time_series(ts, timeseries, label1, label2, axes=None, time_size = 4, duration = 1, colors=['cornflowerblue','coral','forestgreen'], linewidth=2):
+def plot_time_series(ts, timeseries, label1, label2, axes=None, time_size = 4, duration = 1, colors=['cornflowerblue','coral','forestgreen'], linewidth=1):
     
     # label1: number of plots
     # label2: number of time series in each plot
@@ -194,7 +213,7 @@ def plot_time_series(ts, timeseries, label1, label2, axes=None, time_size = 4, d
 
     for s,l in zip(range(len(timeseries)),label1):
         if create_axes: 
-            fig, ax = plt.subplots(figsize=(6*duration,5))
+            fig, ax = plt.subplots(figsize=(2.5*duration, 2))
             axes.append(ax)
             return_figs.append(fig)
         else:
@@ -325,111 +344,111 @@ def plot_res_temp_agg(test_y, test_res, test_ts, time_size, include_zeros=True):
 #     #plt.savefig("../figures/20201201/"+period+"_"+value_col+"_downtown.png", bbox_inches='tight')
 
 
-def plot_output_grid(test_out_mean, test_out_std, test_y, include_zeros=True):
-        fig, ax = plt.subplots(1,4, figsize = (20, 10))
-        ax[0].set_title('Demand')
-        ax[1].set_title('Modelled Mean')
-        ax[2].set_title('Modelled Std Dev')
-        ax[3].set_title('Residual Std Dev')
+# def plot_output_grid(test_out_mean, test_out_std, test_y, include_zeros=True):
+#         fig, ax = plt.subplots(1,4, figsize = (20, 10))
+#         ax[0].set_title('Demand')
+#         ax[1].set_title('Modelled Mean')
+#         ax[2].set_title('Modelled Std Dev')
+#         ax[3].set_title('Residual Std Dev')
 
-        temp_res = test_y - test_out_mean
+#         temp_res = test_y - test_out_mean
 
-        ax[0].set_xticks([])
-        ax[1].set_xticks([])
-        ax[2].set_xticks([])
-        ax[3].set_xticks([])
+#         ax[0].set_xticks([])
+#         ax[1].set_xticks([])
+#         ax[2].set_xticks([])
+#         ax[3].set_xticks([])
 
-        ax[0].set_yticks([])
-        ax[1].set_yticks([])
-        ax[2].set_yticks([])
-        ax[3].set_yticks([])
+#         ax[0].set_yticks([])
+#         ax[1].set_yticks([])
+#         ax[2].set_yticks([])
+#         ax[3].set_yticks([])
 
-        if include_zeros:
-                temp_y = test_y
-                temp_out_mean = test_out_mean
-                temp_out_std = test_out_std
-        else:
-                temp_y = test_y.copy()
-                temp_out_mean = test_out_mean.copy()
-                temp_out_std = test_out_std.copy()
-                zero_mask = test_y==0
-                temp_y[zero_mask] = np.NaN
-                temp_out_mean[zero_mask] = np.NaN
-                temp_out_std[zero_mask] = np.NaN
-                temp_res[zero_mask] = np.NaN
+#         if include_zeros:
+#                 temp_y = test_y
+#                 temp_out_mean = test_out_mean
+#                 temp_out_std = test_out_std
+#         else:
+#                 temp_y = test_y.copy()
+#                 temp_out_mean = test_out_mean.copy()
+#                 temp_out_std = test_out_std.copy()
+#                 zero_mask = test_y==0
+#                 temp_y[zero_mask] = np.NaN
+#                 temp_out_mean[zero_mask] = np.NaN
+#                 temp_out_std[zero_mask] = np.NaN
+#                 temp_res[zero_mask] = np.NaN
 
-        l = np.min([np.nanmean(temp_y, axis=0), np.nanmean(temp_out_mean, axis=0)])
-        u = np.max([np.nanmean(temp_y, axis=0), np.nanmean(temp_out_mean, axis=0)])
-        im0 = ax[0].imshow(np.nanmean(temp_y, axis=0), cmap='coolwarm',
-                        clim=[l,u])
-        im1 = ax[1].imshow(np.nanmean(temp_out_mean, axis=0), cmap='coolwarm',
-                        clim=[l,u])
-        im2 = ax[2].imshow(np.nanmean(temp_out_std, axis=0), cmap='coolwarm')
-        #norm = MidpointNormalize(vmin=np.min(np.nanmean(temp_res, axis=0)),
-        #                        vmax=np.max(np.nanmean(temp_res, axis=0)), midpoint=0)
-        #im3 = ax[3].imshow(np.nanmean(temp_res, axis=0), cmap='coolwarm', norm=norm)
-        im3 = ax[3].imshow(np.nanstd(temp_res, axis=0), cmap='coolwarm', clim=[0,12])
+#         l = np.min([np.nanmean(temp_y, axis=0), np.nanmean(temp_out_mean, axis=0)])
+#         u = np.max([np.nanmean(temp_y, axis=0), np.nanmean(temp_out_mean, axis=0)])
+#         im0 = ax[0].imshow(np.nanmean(temp_y, axis=0), cmap='coolwarm',
+#                         clim=[l,u])
+#         im1 = ax[1].imshow(np.nanmean(temp_out_mean, axis=0), cmap='coolwarm',
+#                         clim=[l,u])
+#         im2 = ax[2].imshow(np.nanmean(temp_out_std, axis=0), cmap='coolwarm')
+#         #norm = MidpointNormalize(vmin=np.min(np.nanmean(temp_res, axis=0)),
+#         #                        vmax=np.max(np.nanmean(temp_res, axis=0)), midpoint=0)
+#         #im3 = ax[3].imshow(np.nanmean(temp_res, axis=0), cmap='coolwarm', norm=norm)
+#         im3 = ax[3].imshow(np.nanstd(temp_res, axis=0), cmap='coolwarm', clim=[0,12])
 
-        #cax = fig.add_axes([0.225, 0.2, 0.02, 0.6])
-        cax = fig.add_axes([0.25, 0.25, 0.015, 0.5])
-        fig.colorbar(im0, cax=cax, orientation='vertical')
-        #cax = fig.add_axes([0.475, 0.2, 0.02, 0.6])
-        cax = fig.add_axes([0.485, 0.25, 0.015, 0.5])
-        fig.colorbar(im1, cax=cax, orientation='vertical')
-        #cax = fig.add_axes([0.7, 0.2, 0.02, 0.6])
-        cax = fig.add_axes([0.725, 0.25, 0.015, 0.5])
-        fig.colorbar(im2, cax=cax, orientation='vertical')
-        #cax = fig.add_axes([0.925, 0.2, 0.02, 0.6])
-        cax = fig.add_axes([0.96, 0.25, 0.015, 0.5])
-        fig.colorbar(im3, cax=cax, orientation='vertical')
-        plt.tight_layout(pad = 4)
+#         #cax = fig.add_axes([0.225, 0.2, 0.02, 0.6])
+#         cax = fig.add_axes([0.25, 0.25, 0.015, 0.5])
+#         fig.colorbar(im0, cax=cax, orientation='vertical')
+#         #cax = fig.add_axes([0.475, 0.2, 0.02, 0.6])
+#         cax = fig.add_axes([0.485, 0.25, 0.015, 0.5])
+#         fig.colorbar(im1, cax=cax, orientation='vertical')
+#         #cax = fig.add_axes([0.7, 0.2, 0.02, 0.6])
+#         cax = fig.add_axes([0.725, 0.25, 0.015, 0.5])
+#         fig.colorbar(im2, cax=cax, orientation='vertical')
+#         #cax = fig.add_axes([0.925, 0.2, 0.02, 0.6])
+#         cax = fig.add_axes([0.96, 0.25, 0.015, 0.5])
+#         fig.colorbar(im3, cax=cax, orientation='vertical')
+#         plt.tight_layout(pad = 4)
 
-        return fig
+#         return fig
 
-def plot_res_grid(test_y, test_res, include_zeros=True):
-        fig, ax = plt.subplots(1,3, figsize = (15, 10))
-        ax[0].set_title('Demand')
-        ax[1].set_title('Residuals')
-        ax[2].set_title('Res Stdev')
+# def plot_res_grid(test_y, test_res, include_zeros=True):
+#         fig, ax = plt.subplots(1,3, figsize = (15, 10))
+#         ax[0].set_title('Demand')
+#         ax[1].set_title('Residuals')
+#         ax[2].set_title('Res Stdev')
 
-        if include_zeros:
-                temp_y = test_y
-                temp_res = test_res
-        else:
-                temp_y = test_y.copy()
-                temp_res = test_res.copy()
-                zero_mask = test_y==0
-                temp_y[zero_mask] = np.NaN
-                temp_res[zero_mask] = np.NaN
+#         if include_zeros:
+#                 temp_y = test_y
+#                 temp_res = test_res
+#         else:
+#                 temp_y = test_y.copy()
+#                 temp_res = test_res.copy()
+#                 zero_mask = test_y==0
+#                 temp_y[zero_mask] = np.NaN
+#                 temp_res[zero_mask] = np.NaN
 
-        im0 = ax[0].imshow(np.nanmean(temp_y, axis=0), cmap='coolwarm')
-        norm = MidpointNormalize(vmin=np.min(np.nanmean(temp_res, axis=0)),
-                                vmax=np.max(np.nanmean(temp_res, axis=0)), midpoint=0)
-        im1 = ax[1].imshow(np.nanmean(temp_res, axis=0), cmap='coolwarm', norm=norm)
-        im2 = ax[2].imshow(np.nanstd(temp_res, axis=0), cmap='coolwarm', clim=[0,12])
+#         im0 = ax[0].imshow(np.nanmean(temp_y, axis=0), cmap='coolwarm')
+#         norm = MidpointNormalize(vmin=np.min(np.nanmean(temp_res, axis=0)),
+#                                 vmax=np.max(np.nanmean(temp_res, axis=0)), midpoint=0)
+#         im1 = ax[1].imshow(np.nanmean(temp_res, axis=0), cmap='coolwarm', norm=norm)
+#         im2 = ax[2].imshow(np.nanstd(temp_res, axis=0), cmap='coolwarm', clim=[0,12])
 
-        ax[0].set_xticks([])
-        ax[1].set_xticks([])
-        ax[2].set_xticks([])
+#         ax[0].set_xticks([])
+#         ax[1].set_xticks([])
+#         ax[2].set_xticks([])
 
-        ax[0].set_yticks([])
-        ax[1].set_yticks([])
-        ax[2].set_yticks([])
+#         ax[0].set_yticks([])
+#         ax[1].set_yticks([])
+#         ax[2].set_yticks([])
 
-        # left bot width height
-        #cax = fig.add_axes([0.35, 0.2, 0.02, 0.6])
-        cax = fig.add_axes([0.33, 0.25, 0.016, 0.5])
-        fig.colorbar(im0, cax=cax, orientation='vertical')
-        #cax = fig.add_axes([0.65, 0.2, 0.02, 0.6])
-        cax = fig.add_axes([0.63, 0.25, 0.016, 0.5])
-        fig.colorbar(im1, cax=cax, orientation='vertical')
-        #cax = fig.add_axes([0.95, 0.2, 0.02, 0.6])
-        cax = fig.add_axes([0.95, 0.25, 0.016, 0.5])
-        fig.colorbar(im2, cax=cax, orientation='vertical')
-        #plt.tight_layout(pad = 2)
-        plt.tight_layout(pad = 4)
+#         # left bot width height
+#         #cax = fig.add_axes([0.35, 0.2, 0.02, 0.6])
+#         cax = fig.add_axes([0.33, 0.25, 0.016, 0.5])
+#         fig.colorbar(im0, cax=cax, orientation='vertical')
+#         #cax = fig.add_axes([0.65, 0.2, 0.02, 0.6])
+#         cax = fig.add_axes([0.63, 0.25, 0.016, 0.5])
+#         fig.colorbar(im1, cax=cax, orientation='vertical')
+#         #cax = fig.add_axes([0.95, 0.2, 0.02, 0.6])
+#         cax = fig.add_axes([0.95, 0.25, 0.016, 0.5])
+#         fig.colorbar(im2, cax=cax, orientation='vertical')
+#         #plt.tight_layout(pad = 2)
+#         plt.tight_layout(pad = 4)
 
-        return fig
+#         return fig
 
 
 
