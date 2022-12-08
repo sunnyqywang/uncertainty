@@ -27,7 +27,7 @@ Functions in this script:
 import geopandas as gpd
 # import geoplot as gplt
 # import geoplot.crs as gcrs
-import mapclassify as mc
+# import mapclassify as mc
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -59,7 +59,7 @@ def plot_calibration(ax, p, p_hat, label, clr):
     ax.set_yticks(np.arange(0,1.1,0.2))
 
     ax.set_xlabel("Expected Quantile (Predicted)")
-    ax.set_ylabel("Observed Quantile (from Data")
+    ax.set_ylabel("Observed Quantile (from Data)")
 
     ax.set_xlim([0,1])
     ax.set_ylim([0,1])

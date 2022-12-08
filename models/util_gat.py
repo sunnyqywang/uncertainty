@@ -36,7 +36,7 @@ def load_model(project_dir, save_dir, period, train_extent, adj_type, predict_hz
         for f in file:
             print(f)
             
-    print(file[0])
+#     print(file[0])
     saved = torch.load(file[0])
     if len(saved['hyperparameters']) == 14:
         (_,_,_,_,_,_,_,_,dropout,n_hid_units,nlstm,ngc,weight_decay,_) = saved['hyperparameters']
@@ -97,7 +97,7 @@ def ensemble(project_dir, save_dir, period, predict_hzn, time_size, lookback, en
             + np.power(np.array(std_list),2), axis=0)\
             - np.power(test_ens_mean,2))
 
-    return data['ts'][1], y_test_eval, test_ens_mean, test_ens_std, mean_list, std_list
+    return data['ts'][-1], y_test_eval, test_ens_mean, test_ens_std, mean_list, std_list
 
 
 def calc_attention(h, adj, W, a):
@@ -118,7 +118,7 @@ def calc_attention(h, adj, W, a):
 
     return attention
 
-def testset_output_gat(testloader, meanonly, homo, net, criterion, adj, demo, device, n_time, return_components=False):
+def testset_output_gat(testloader, meanonly, homo, net, criterion, adj, demo, device, n_time, return_components=False, std=None):
     loss = 0
     net.eval()
     
@@ -144,25 +144,24 @@ def testset_output_gat(testloader, meanonly, homo, net, criterion, adj, demo, de
             outputs = net(batch_x, adj, batch_history, demo, batch_weather, batch_los, batch_qod_onehot)
 
         # loss
-        if (meanonly) & (not homo):
+        if (meanonly) & (homo==0):
             loss += criterion(outputs, target=batch_y).item()
-        elif homo:
-            loss += criterion(outputs[0], outputs[1], batch_y).item()
+        elif homo>0:
+            loss += criterion(outputs, std, batch_y).item()
         else:
             loss += criterion(outputs[:batch_size,:], outputs[batch_size:,:], batch_y).item()
 
-        if (meanonly) & (not homo):
+        if (meanonly) & (homo==0):
             if i == 0:
                 test_out_mean = outputs[:batch_size,:].cpu().detach().numpy()
             else:
                 test_out_mean = np.concatenate((test_out_mean, outputs[:batch_size,:].cpu().detach().numpy()), axis=0)
 
-        elif homo:
+        elif homo>0:
             if i == 0:
-                test_out_mean = outputs[0][:batch_size,:].cpu().detach().numpy()
-                test_out_var = outputs[1].cpu().detach().numpy()
+                test_out_mean = outputs.cpu().detach().numpy()
             else:
-                test_out_mean = np.concatenate((test_out_mean, outputs[0][:batch_size,:].cpu().detach().numpy()), axis=0)
+                test_out_mean = np.concatenate((test_out_mean, outputs.cpu().detach().numpy()), axis=0)
         else:
             if i == 0:
                 test_out_mean = outputs[:batch_size,:].cpu().detach().numpy()
@@ -171,7 +170,9 @@ def testset_output_gat(testloader, meanonly, homo, net, criterion, adj, demo, de
                 test_out_mean = np.concatenate((test_out_mean, outputs[:batch_size,:].cpu().detach().numpy()), axis=0)
                 test_out_var = np.concatenate((test_out_var, outputs[batch_size:,:].cpu().detach().numpy()), axis=0)
 
-    if (meanonly) & (not homo):
+    if (meanonly) & (homo==0):
         return test_out_mean, None, loss
+    elif homo>0:
+        return test_out_mean, std.cpu().detach().numpy(), loss
     else:
         return test_out_mean, test_out_var, loss

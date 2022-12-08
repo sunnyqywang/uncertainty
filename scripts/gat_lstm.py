@@ -78,10 +78,10 @@ def post_process_pi(dist, loc, scale, z):
         
     return lb, ub
 
-def evaluate(args, dist, dataloader, z, y_eval):
+def evaluate(args, dist, dataloader, z, y_eval, std=None):
     
     val_out_loc, val_out_scale, val_loss = util_gat.testset_output_gat(dataloader, args.MeanOnly, args.Homoskedastic, net, criterion, 
-            adj_torch, spatial_torch, device, n_time)
+            adj_torch, spatial_torch, device, n_time, std=std)
     val_out_predict, val_out_std = post_process_dist(dist, val_out_loc, val_out_scale)
 
     val_mae, val_mse, _, _, _ = util_eval.eval_mean(val_out_predict, y_eval, "")
@@ -121,14 +121,14 @@ if __name__ == "__main__":
     parser.add_argument("-sv", "--Save", help="Whether to save models", default=0)
     parser.add_argument("-md", "--Model", help="Model type", default='GAT')
 
-    args = parser.parse_args(['@arguments.txt'])
+    args = parser.parse_args(['@arguments_a.txt'])
     
     args.Period = args.Period.split(',')
     args.Lookback = [int(x) for x in args.Lookback.split(',')]
     args.Dist = args.Dist.split(',')
     args.Difference = bool(int(args.Difference))
     args.MeanOnly = bool(int(args.MeanOnly))
-    args.Homoskedastic = bool(int(args.Homoskedastic))
+    args.Homoskedastic = float(args.Homoskedastic)
     args.IncludeSpatial = bool(int(args.IncludeSpatial))
     args.Save = bool(int(args.Save))
     args.Bootstrap = bool(int(args.Bootstrap))
@@ -161,7 +161,7 @@ if __name__ == "__main__":
 
     for (period, dist) in itertools.product(args.Period, args.Dist):
 
-        if (dist=='norm')&(args.Homoskedastic):
+        if (dist=='norm')&(args.Homoskedastic>0):
             dist_save = 'norm_homo'
         else:
             dist_save = dist
@@ -186,10 +186,11 @@ if __name__ == "__main__":
             y_val_eval = np.squeeze(y_val_eval)
             y_test_eval = np.squeeze(y_test_eval)
             
-            if args.Homoskedastic:
-                std_starter = torch.tensor([np.random.rand()*np.mean(y_train_eval)*0.5])
+            if args.Homoskedastic > 0:
+                std = torch.tensor([args.Homoskedastic*np.mean(y_train_eval)])
+                std = std.to(device)
             else:
-                std_starter = None
+                std = None
             
             same_hp = False
             if not args.IncludeSpatial:
@@ -274,7 +275,7 @@ if __name__ == "__main__":
                 net = GAT_LSTM(meanonly=args.MeanOnly, homo=args.Homoskedastic, nadj = 1, 
                                nmode=n_modes, nstation=n_stations, ntime=n_time, ndemo=ndemo,
                                nhead=n_head, nhid_g=n_hid_units, nga=ngc, nhid_l=n_hid_units, nlstm=nlstm, 
-                               nhid_fc=n_hid_units, dropout=dropout, std_starter=std_starter)
+                               nhid_fc=n_hid_units, dropout=dropout, std_starter=std)
                 net.to(device)
 
                 optimizer = optim.Adam(net.parameters(), lr=args.LearningRate, weight_decay=weight_decay)
@@ -319,12 +320,12 @@ if __name__ == "__main__":
                             output_loc = outputs
                             loss = criterion(output_loc, target=batch_y)
                         else:
-                            if not args.Homoskedastic:
+                            if args.Homoskedastic == 0:
                                 output_loc = outputs[:batch_size,:]
                                 output_scale = outputs[batch_size:,:]
                             else:
-                                output_loc, output_scale = outputs
-
+                                output_loc = outputs
+                                output_scale = std
                             loss = criterion(output_loc, output_scale, batch_y)
 
                         # backward
@@ -348,7 +349,7 @@ if __name__ == "__main__":
     
                         net.eval()
 
-                        tr_loss, tr_mae, tr_mse, tr_mpiw, tr_picp = evaluate(args, dist, trainloader_test, z, y_train_eval)
+                        tr_loss, tr_mae, tr_mse, tr_mpiw, tr_picp = evaluate(args, dist, trainloader_test, z, y_train_eval, std=std)
 
                         writer.add_scalar("Loss/Train", running_loss/num_train, epoch+1)
                         writer.add_scalar("MAE/Train", tr_mae, epoch+1)
@@ -356,14 +357,14 @@ if __name__ == "__main__":
                         writer.add_scalar("PICP/Train", tr_picp, epoch+1)
 
 
-                        val_loss, val_mae, val_mse, val_mpiw, val_picp = evaluate(args, dist, valloader, z, y_val_eval)
+                        val_loss, val_mae, val_mse, val_mpiw, val_picp = evaluate(args, dist, valloader, z, y_val_eval, std=std)
 
                         writer.add_scalar("Loss/Validation", val_loss/num_val, epoch+1)
                         writer.add_scalar("MAE/Validation", val_mae, epoch+1)
                         writer.add_scalar("MPIW/Validation", val_mpiw, epoch+1)
                         writer.add_scalar("PICP/Validation", val_picp, epoch+1)
 
-                        test_loss, test_mae, test_mse, test_mpiw, test_picp = evaluate(args, dist, testloader, z, y_test_eval)
+                        test_loss, test_mae, test_mse, test_mpiw, test_picp = evaluate(args, dist, testloader, z, y_test_eval, std=std)
 
                         writer.add_scalar("Loss/Test", test_loss/num_val, epoch+1)
                         writer.add_scalar("MAE/Test", test_mae, epoch+1)

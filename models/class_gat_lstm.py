@@ -28,10 +28,10 @@ class GAT_LSTM(nn.Module):
         self.nga = nga
         self.nhid_fc = nhid_fc
 
-        if homo: # if homoskedastic, then only mean is produced by the convolutions
+        if homo > 0 : # if homoskedastic, then only mean is produced by the convolutions
             self.meanonly = True
-            self.std = nn.Parameter(torch.tensor([std_starter]), requires_grad=True)
-        self.homo = homo
+            # self.std = nn.Parameter(torch.tensor([std_starter]), requires_grad=True)
+#         self.homo = homo
         
         # batchnorm1d: over 3D input of size (N,C,L); num_features = C
         self.batchnorm = nn.BatchNorm1d(num_features=nstation)
@@ -180,10 +180,7 @@ class GAT_LSTM(nn.Module):
 #             print(recent_on_history_weights_mean)
 #             print(recent_on_history_weights_var)
         if not return_components:
-            if self.homo:
-                return final_out, F.softplus(self.std)
-            else:
-                return final_out
+            return final_out
         else:
             # return-components for homoskedastic variance is not implemented
             if xs is not None:

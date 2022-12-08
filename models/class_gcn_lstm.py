@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from layers import GraphConvolution
 
 class GCN_LSTM(nn.Module):
-    def __init__(self, meanonly, homo, nadj, nmode, nstation, ntime, ndemo, nhid_g, ngc, nhid_l, nlstm, nhid_fc, dropout, std_starter=None):
+    def __init__(self, meanonly, homo, nadj, nmode, nstation, ntime, ndemo, nhid_g, ngc, nhid_l, nlstm, nhid_fc, dropout, std_starter=1.0):
         # meanonly: bool, whether output is mean only or mean and standard deviation
         # nmode: number of modes (features) in x (ridership immediately before)
         # nstation: number of spatial units
@@ -20,7 +20,7 @@ class GCN_LSTM(nn.Module):
         self.meanonly = meanonly
         if homo: # if homoskedastic, then only mean is produced by the convolutions
             self.meanonly = True
-            self.std = nn.Parameter(std_starter, requires_grad=True)
+#             self.std = nn.Parameter(torch.tensor([std_starter]), requires_grad=True)
         self.homo = homo
         self.nhid_g = nhid_g
         self.ntime = ntime
@@ -60,7 +60,7 @@ class GCN_LSTM(nn.Module):
         # Level of Service
         self.los_weights_mean = nn.Parameter(torch.rand(ntime, nstation))
 
-        if meanonly | homo:
+        if meanonly | (homo>0):
             mult = 1
         else:
             mult = 2
@@ -197,7 +197,7 @@ class GCN_LSTM(nn.Module):
 
             out = self.final(out)
 
-            if (self.meanonly)|(self.homo):
+            if (self.meanonly)|(self.homo>0):
                 out = out.view(batch_size, -1, 1)
 #                 out_mean = F.softplus(out[:,:,0]+history_mean+gcs_mean+weather_mean+los_mean)
                 out_mean = F.softplus(out[:,:,0]+gcs_mean+history_mean+weather_mean)
@@ -219,10 +219,7 @@ class GCN_LSTM(nn.Module):
 #                 print(recent_on_history_weights_var[0,:])
                 
         if not return_components:
-            if self.homo:
-                return final_out, F.softplus(self.std)
-            else:
-                return final_out
+            return final_out
         else:
             # return-components for homoskedastic variance is not implemented
             if xs is not None:
