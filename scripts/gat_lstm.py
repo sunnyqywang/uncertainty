@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 import glob
 import itertools
 import os
@@ -6,6 +7,7 @@ import sys
 sys.path.append('../models/')
 sys.path.append('../eval/')
 sys.path.append('../process_data/')
+sys.path.append('../')
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,8 +32,11 @@ import util_gat
 import util_gcnn
 import util_eval
 import util_plot
+import util_data
 
-plt.rcParams.update({'font.size': 11})
+from setup import *
+
+# plt.rcParams.update({'font.size': 11})
 
 def post_process_dist(dist, loc, scale):
     
@@ -78,13 +83,13 @@ def post_process_pi(dist, loc, scale, z):
         
     return lb, ub
 
-def evaluate(args, dist, dataloader, z, y_eval, std=None):
+def evaluate(args, dist, dataloader, z, y_eval, std=None, time_size=1):
     
     val_out_loc, val_out_scale, val_loss = util_gat.testset_output_gat(dataloader, args.MeanOnly, args.Homoskedastic, net, criterion, 
-            adj_torch, spatial_torch, device, n_time, std=std)
+            adj_torch, spatial_torch, device, n_time, std=std, time_size=time_size)
     val_out_predict, val_out_std = post_process_dist(dist, val_out_loc, val_out_scale)
 
-    val_mae, val_mse, _, _, _ = util_eval.eval_mean(val_out_predict, y_eval, "")
+    val_mae, val_mape, _ = util_eval.eval_mean(val_out_predict, y_eval, "")
 
     if args.LossFunc == 'mve':
         lb, ub = post_process_pi(dist, val_out_loc, val_out_scale, z)
@@ -93,14 +98,18 @@ def evaluate(args, dist, dataloader, z, y_eval, std=None):
         val_mpiw = 0
         val_picp = 0
         
-    return val_loss, val_mae, val_mse, val_mpiw, val_picp
+    return val_loss, val_mae, val_mape, val_mpiw, val_picp
 
 if __name__ == "__main__":
     project_dir = "/home/jtl/Dropbox (MIT)/project_uncertainty_quantification/"
 
     parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
     
-    parser.add_argument("-p", "--Period", help="Study period: before/after", type=str, default='before')    
+    parser.add_argument("-dataset", "--Dataset", help="rail_catchment / census_tract", type=str, default="rail_catchment")
+    parser.add_argument("-trainst", "--TrainStartDate", help="Train start date", type=str, default='20190801')
+    parser.add_argument("-trained", "--TrainEndDate", help="Train end date", type=str, default='20200301')
+    parser.add_argument("-testst", "--TestStartDate", help="Test start date", type=str, default='20200302')
+    parser.add_argument("-tested", "--TestEndDate", help="Test end date", type=str, default='20200315')
     parser.add_argument("-ph", "--PredictHorizon", help="Predict horizon", default=1)
     parser.add_argument("-ts", "--TimeSize", help="Time aggregation", default=4)
     parser.add_argument("-df", "--Difference", help="Whether to difference", default=1)
@@ -112,7 +121,7 @@ if __name__ == "__main__":
     parser.add_argument("-hm", "--Homoskedastic", help="Whether homo or hetero-skedastic variance is estimated", default=0)
     parser.add_argument("-te", "--TrainExtent", help="Training Extent: downtown/all", default='downtown')
     parser.add_argument("-e", "--Epoch", help="Number of training epochs", default=500)
-    parser.add_argument("-lr", "--LearningRate", help="Learning rate", default=0.001)
+    parser.add_argument("-lr", "--LearningRate", help="Learning rate", default=1e-4)
     parser.add_argument("-ms", "--ModelNumberStart", help="Start number of models for each combination of the parameters", type=int, default=-1)
     parser.add_argument("-me", "--ModelNumberEnd", help="End number of models for each combination of the parameters", type=int, default=10)
     parser.add_argument("-s", "--IncludeSpatial", help="Whether to include spatial (demo+poi) information", default=0)
@@ -120,11 +129,18 @@ if __name__ == "__main__":
     parser.add_argument("-of", "--OutFolder", help="Output Folder", default="")
     parser.add_argument("-sv", "--Save", help="Whether to save models", default=0)
     parser.add_argument("-md", "--Model", help="Model type", default='GAT')
+    parser.add_argument("-dev", "--Device", help="Cuda device to run on", default="cuda:0")
+    parser.add_argument("-tb", "--Tensorboard", help="Whether to write to tensorboard", default=0)
 
     args = parser.parse_args(['@arguments_a.txt'])
     
-    args.Period = args.Period.split(',')
+    args.TrainStartDate = args.TrainStartDate.split(',')
+    args.TrainEndDate = args.TrainEndDate.split(',')
+    args.TestStartDate = args.TestStartDate.split(',')
+    args.TestEndDate = args.TestEndDate.split(',')
+    args.TrainExtent = args.TrainExtent.split(',')
     args.Lookback = [int(x) for x in args.Lookback.split(',')]
+    args.TimeSize = [int(x) for x in args.TimeSize.split(',')]
     args.Dist = args.Dist.split(',')
     args.Difference = bool(int(args.Difference))
     args.MeanOnly = bool(int(args.MeanOnly))
@@ -133,54 +149,65 @@ if __name__ == "__main__":
     args.Save = bool(int(args.Save))
     args.Bootstrap = bool(int(args.Bootstrap))
 
-    dropout_rate_list=[0.2,0.5]
-    n_hid_units_list=[64,128]
-    weight_decay_list = [0.0001, 0.001, 0.01, 0.1]
-    ngc_list = [1,2]
-    nlstm_list = [1,2]
-    nhead_list = [4,8]
+    dropout_rate_list=[0.1,0.3]
+    n_hid_units_list=[64]
+    weight_decay_list = [0.01,0.05,0.1,0.5]
+    ngc_list = [1]
+    nlstm_list = [1]
+    nhead_list = [2]
 
     hps = list(itertools.product(dropout_rate_list, n_hid_units_list, weight_decay_list, nlstm_list, ngc_list, nhead_list))
     max_lookback = 6
-
 
     if args.ModelNumberStart == -1:
         run_all = True
     else:
         run_all = False
 
-    predict_hzn = args.PredictHorizon
-    time_size = args.TimeSize
+    predict_hzn = int(args.PredictHorizon)
     difference = args.Difference
     adj_type = args.Adj
     train_extent = args.TrainExtent
+    dataset = args.Dataset
     
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device(args.Device if torch.cuda.is_available() else "cpu")
+    print(device)
  #    device = torch.device("cpu")
     z = 0.95
 
-    for (period, dist) in itertools.product(args.Period, args.Dist):
+    for (trainst, trained, testst, tested, dist, train_extent, time_size) in itertools.product(args.TrainStartDate, args.TrainEndDate, args.TestStartDate, args.TestEndDate, args.Dist, args.TrainExtent, args.TimeSize): 
 
         if (dist=='norm')&(args.Homoskedastic>0):
-            dist_save = 'norm_homo'
+            dist_save = 'norm_homo'+str(args.Homoskedastic)
         else:
             dist_save = dist
+            
+        if dist == 'poisson':
+            meanonly=True
+        else:
+            meanonly=args.MeanOnly
+        
+        if dataset == 'rail_catchment':
+            n_time = (96-28) // time_size
+        elif dataset == 'census_tract':
+            n_time = (96-20) // time_size
 
-        writer_hp = SummaryWriter(project_dir+"tensorboard/runs/"+args.OutFolder+"_"+period+"_"+args.Model+"_"+dist_save+"/")
+
+        if args.Tensorboard:
+            writer_hp = SummaryWriter(project_dir+"tensorboard/runs/"+args.OutFolder+"_"+period+"_"+args.Model+"_"+dist_save+"/")
 
         for lookback in args.Lookback:
 
-            print("Model:", args.Model, "Period:", period, "Predict Horizon:", predict_hzn, "Time Size:", time_size, "Lookback:", lookback, "\nadj:", '_'.join(adj_type), "Dist:", dist_save, "Train Extent:", train_extent)
-            n_time = 96 // time_size - 7
+            print("Train Period:", trainst, trained, "Test Period:", testst, tested, "\nPredict Horizon:", predict_hzn, "Time Size:", time_size, "Lookback:", lookback, "\nadj:", '_'.join(adj_type), "Dist:", dist_save, "Train Extent:", train_extent)
 
             data, adj, spatial, downtown_filter = \
-                    util_gcnn.combine_datasources(project_dir, period, predict_hzn, time_size, difference, max_lookback, lookback)
+                    util_data.combine_datasources(project_dir, trainst, trained, testst, tested, predict_hzn, time_size, difference, max_lookback, lookback, dataset)
 
             trainloader, trainloader_test, valloader, testloader, adj_torch, spatial_torch, y_train_eval, y_val_eval, y_test_eval = \
-                    util_gcnn.prepare_for_torch(device, train_extent, data, adj, spatial, downtown_filter, adj_type, bootstrap=args.Bootstrap)
+                    util_data.prepare_for_torch(device, train_extent, data, adj, spatial, downtown_filter, adj_type, bootstrap=args.Bootstrap)
             (num_train, _, _, n_modes) = data['x'][0].shape
-            num_test = len(y_test_eval)
             num_val = len(y_val_eval)
+            num_test = len(y_test_eval)
             n_stations = adj_torch.shape[0]
             y_train_eval = np.squeeze(y_train_eval)
             y_val_eval = np.squeeze(y_val_eval)
@@ -200,18 +227,16 @@ if __name__ == "__main__":
                 ndemo = spatial.shape[1]
 
             if run_all:
-                if os.path.isfile(project_dir+"results/"+args.OutFolder+"_"+period+"/results.csv"):
-                    results = pd.read_csv(project_dir+"results/"+args.OutFolder+"_"+period+"/results.csv")
-                    hp_run = results[(results['Model Type']==args.Model)&(results['Period']==period)&(results['Distribution']==dist_save)&
-                            (results['Predict Horizon']==predict_hzn)&(results['Time Size']==time_size)&
-                            (results['Adjacency']=='_'.join(adj_type))& \
-                            (results['Lookback']==lookback)&(results['Train Extent']=='downtown')&
-                            (results['spatial']==int(args.IncludeSpatial))] 
+                if os.path.isfile(project_dir+"results/"+args.OutFolder+"_"+dataset.split("_")[0]+"_"+trainst+"-"+trained+"_"+testst+"-"+tested+"/results.csv"):
+                    results = pd.read_csv(project_dir+"results/"+args.OutFolder+"_"+dataset.split("_")[0]+"_"+trainst+"-"+trained+"_"+testst+"-"+tested+"/results.csv")
+                    hp_run = results[(results['Model Type']=="GAT")&\
+                                     (results['Distribution']==dist_save)&(results['Predict Horizon']==predict_hzn)&(results['Time Size']==time_size)&(results['Adjacency']=='_'.join(adj_type))& \
+                            (results['Lookback']==lookback)&(results['Train Extent']==train_extent)&(results['spatial']==int(args.IncludeSpatial))] 
                 else:
                     hp_run = []
 
                 if len(hp_run) != 0:
-                    model_offset = int(hp_run['Model'].max())+1
+                    model_offset = 0 #int(hp_run['Model'].max())+1
                     hp_run = hp_run[['dropout','n_hid_units','weight_decay','nlstm','ngc','n_head']].to_numpy()
                     hp_run = [tuple(l) for l in hp_run]
                 else:
@@ -224,7 +249,7 @@ if __name__ == "__main__":
                 model_offset = 0
                 model_offset_2 = 0
                 
-            print(model_offset)
+#             print(model_offset)
             print(args.ModelNumberStart)
             print(args.ModelNumberEnd)
 
@@ -233,17 +258,19 @@ if __name__ == "__main__":
                 if run_all: 
                     hp_index = ii
                     if hps[hp_index] in hp_run:
-                        model_offset_2 += 1
+#                         model_offset_2 += 1
                         continue
                 else:
-                    hp_index = np.random.choice(np.arange(0, len(hps)))
-
-                save_dir = project_dir+"models/"+args.OutFolder+"_"+period+"_"+args.Model+"_"+dist_save+"/"
+#                     hp_index = np.random.choice(np.arange(0, len(hps)))
+                    hp_index = ii
+    
+                save_dir = model_dir+args.OutFolder+"_"+dataset.split("_")[0]+"_"+trainst+"-"+trained+"_GAT_"+dist_save+"/"
                 if not os.path.isdir(save_dir):
                     os.mkdir(save_dir)
 
                 save_dir += train_extent+"_"+'-'.join(adj_type)+"_"+str(predict_hzn)+"_"+str(time_size)+"_"+str(lookback)+"_"+str(ii+model_offset-model_offset_2)
-                writer = SummaryWriter(project_dir+"tensorboard/runs/"+args.OutFolder+"_"+period+"_"+
+                if args.Tensorboard:
+                    writer = SummaryWriter(project_dir+"tensorboard/runs/"+args.OutFolder+"_"+period+"_"+
                                        args.Model+"_"+dist+"_train/"+str(lookback)+"_"+
                                        str(ii+model_offset-model_offset_2)+"/")
 
@@ -257,9 +284,6 @@ if __name__ == "__main__":
                 ngc = hps[hp_index][4]
                 n_head = hps[hp_index][5]
                 
-                if ngc == 2:
-                    continue
-
                 print('Model ', ii+model_offset-model_offset_2)
 
                 if args.LossFunc == 'mve':
@@ -272,23 +296,28 @@ if __name__ == "__main__":
 
                 ## Need test nadj
                 ## 220405 not using adj
-                net = GAT_LSTM(meanonly=args.MeanOnly, homo=args.Homoskedastic, nadj = 1, 
+                net = GAT_LSTM(meanonly=meanonly, homo=args.Homoskedastic, nadj = 1, 
                                nmode=n_modes, nstation=n_stations, ntime=n_time, ndemo=ndemo,
                                nhead=n_head, nhid_g=n_hid_units, nga=ngc, nhid_l=n_hid_units, nlstm=nlstm, 
                                nhid_fc=n_hid_units, dropout=dropout, std_starter=std)
                 net.to(device)
 
                 optimizer = optim.Adam(net.parameters(), lr=args.LearningRate, weight_decay=weight_decay)
+
                 ref1 = 0
                 ref2 = 0
                 success=True
+                train_loss_list = []
+                val_loss_list = []
+                test_loss_list = []
+
+                start_runtime = datetime.now()
 
                 for epoch in range(args.Epoch):
 
                     running_loss = 0.0
 
                     for i, batch_data in enumerate(trainloader, 0):
-
                         net.train()
 
                         # get the inputs; data is a list of [inputs, labels, history, quarter of the day]
@@ -301,10 +330,8 @@ if __name__ == "__main__":
                         batch_qod = batch_qod.view(-1,1)
                         batch_qod_onehot = torch.FloatTensor(batch_size, n_time)
                         batch_qod_onehot.zero_()
-                        batch_qod_onehot.scatter_(1, batch_qod-6, 1)
-                        if dist == 'lognorm':
-                            batch_history = torch.log(batch_history+0.00001)
-
+                        batch_qod_onehot.scatter_(1, batch_qod, 1)
+                        
                         batch_x, batch_y, batch_history, batch_weather, batch_los, batch_qod_onehot = \
                                 batch_x.to(device), batch_y.to(device), batch_history.to(device), \
                                 batch_weather.to(device), batch_los.to(device), batch_qod_onehot.to(device)
@@ -316,7 +343,7 @@ if __name__ == "__main__":
                         outputs = net(batch_x, adj_torch, batch_history, spatial_torch, 
                                 batch_weather, batch_los, batch_qod_onehot)
 
-                        if args.MeanOnly:
+                        if meanonly:
                             output_loc = outputs
                             loss = criterion(output_loc, target=batch_y)
                         else:
@@ -344,40 +371,36 @@ if __name__ == "__main__":
                         break
 
                     if epoch % 5 == 0:
-    #                     print('[%d] training loss: %.3f' %
-    #                             (epoch + 1, running_loss/num_train), end = '\t')
+#                         print('[%d] training loss: %.3f' %
+#                                 (epoch + 1, running_loss/num_train), end = '\t')
     
                         net.eval()
 
-                        tr_loss, tr_mae, tr_mse, tr_mpiw, tr_picp = evaluate(args, dist, trainloader_test, z, y_train_eval, std=std)
+                        tr_loss, tr_mae, tr_mape, tr_mpiw, tr_picp = evaluate(args, dist, trainloader_test, z, y_train_eval, std=std, time_size=time_size)
+                        val_loss, val_mae, val_mape, val_mpiw, val_picp = evaluate(args, dist, valloader, z, y_val_eval, std=std, time_size=time_size)
+                        test_loss, test_mae, test_mape, test_mpiw, test_picp = evaluate(args, dist, testloader, z, y_test_eval, std=std, time_size=time_size)
+                        print('[%d] training loss: %.3f, %.1f, %.3f' % (epoch + 1, tr_loss/num_train, tr_mae, tr_mape))
+#                         print(output_loc.mean(), output_loc.min(), output_scale.max())
+#                         print(output_scale.mean(), output_scale.min(), output_scale.max())
+                        
+                        if args.Tensorboard:
+                            writer.add_scalar("Loss/Train", tr_loss/num_train, epoch+1)
+                            writer.add_scalar("MAE/Train", tr_mae, epoch+1)
+                            writer.add_scalar("MPIW/Train", tr_mpiw, epoch+1)
+                            writer.add_scalar("PICP/Train", tr_picp, epoch+1)
 
-                        writer.add_scalar("Loss/Train", running_loss/num_train, epoch+1)
-                        writer.add_scalar("MAE/Train", tr_mae, epoch+1)
-                        writer.add_scalar("MPIW/Train", tr_mpiw, epoch+1)
-                        writer.add_scalar("PICP/Train", tr_picp, epoch+1)
-
-
-                        val_loss, val_mae, val_mse, val_mpiw, val_picp = evaluate(args, dist, valloader, z, y_val_eval, std=std)
-
-                        writer.add_scalar("Loss/Validation", val_loss/num_val, epoch+1)
-                        writer.add_scalar("MAE/Validation", val_mae, epoch+1)
-                        writer.add_scalar("MPIW/Validation", val_mpiw, epoch+1)
-                        writer.add_scalar("PICP/Validation", val_picp, epoch+1)
-
-                        test_loss, test_mae, test_mse, test_mpiw, test_picp = evaluate(args, dist, testloader, z, y_test_eval, std=std)
-
-                        writer.add_scalar("Loss/Test", test_loss/num_val, epoch+1)
-                        writer.add_scalar("MAE/Test", test_mae, epoch+1)
-                        writer.add_scalar("MPIW/Test", test_mpiw, epoch+1)
-                        writer.add_scalar("PICP/Test", test_picp, epoch+1)
+                            writer.add_scalar("Loss/Test", test_loss/num_test, epoch+1)
+                            writer.add_scalar("MAE/Test", test_mae, epoch+1)
+                            writer.add_scalar("MPIW/Test", test_mpiw, epoch+1)
+                            writer.add_scalar("PICP/Test", test_picp, epoch+1)
 
                         if epoch > 40:
                             if running_loss < best:
                                 best = running_loss
                                 best_epoch = epoch
-                                output_string = (tr_loss/num_train, tr_mae, tr_mse, tr_mpiw, tr_picp,
-                                    val_loss/num_val, val_mae, val_mse, val_mpiw, val_picp,
-                                    test_loss/num_test, test_mae, test_mse, test_mpiw, test_picp)
+                                output_string = (tr_loss/num_train, tr_mae, tr_mape, tr_mpiw, tr_picp,
+                                    val_loss/num_val, val_mae, val_mape, val_mpiw, val_picp,
+                                    test_loss/num_test, test_mae, test_mape, test_mpiw, test_picp)
                             if (np.abs(running_loss - ref1)/ref1<0.005) & (np.abs(running_loss - ref2)/ref2<0.005):
                                 print("early stopping at epoch", epoch)
                                 print("best epoch:", best_epoch)
@@ -390,10 +413,9 @@ if __name__ == "__main__":
                         else:
                             best = running_loss
                             best_epoch = epoch
-                            output_string = (tr_loss/num_train, tr_mae, tr_mse, tr_mpiw, tr_picp,
-                                    val_loss/num_val, val_mae, val_mse, val_mpiw, val_picp,
-                                    test_loss/num_test, test_mae, test_mse, test_mpiw, test_picp)
-
+                            output_string = (tr_loss/num_train, tr_mae, tr_mape, tr_mpiw, tr_picp,
+                                    val_loss/num_val, val_mae, val_mape, val_mpiw, val_picp,
+                                    test_loss/num_test, test_mae, test_mape, test_mpiw, test_picp)
                         ref2 = ref1
                         ref1 = running_loss
 
@@ -401,21 +423,33 @@ if __name__ == "__main__":
                             torch.save({'epoch': epoch,
                                 'model_state_dict': net.state_dict(),
                                 'optimizer_state_dict': optimizer.state_dict(),
-                                'hyperparameters': (period, train_extent, train_extent, '_'.join(adj_type), ii, 
-                                    predict_hzn, time_size, lookback, 
-                                    dropout, n_hid_units, nlstm, ngc, weight_decay, args.Bootstrap)},
+                                'hyperparameters': (trainst, trained, testst, tested, 
+                                                     train_extent, '_'.join(adj_type), ii, 
+                                    predict_hzn, time_size, lookback, n_head, 
+                                    dropout, n_hid_units, nlstm, ngc, weight_decay, args.Bootstrap),
+                                'train_loss': train_loss_list,
+                                'val_loss': val_loss_list,
+                                'test_loss': test_loss_list},
                                 save_dir+"_"+str(epoch)+".pt")
 
                             files = glob.glob(save_dir+"_*.pt")
-
+                    
+                        train_loss_list.append(tr_loss/num_train)
+                        val_loss_list.append(val_loss/num_val)
+                        test_loss_list.append(test_loss/num_test)
+        
                 if args.Save:
                     if best_epoch==epoch:
                         torch.save({'epoch': epoch,
                             'model_state_dict': net.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
-                            'hyperparameters': (period, train_extent, train_extent, '_'.join(adj_type), ii, 
-                                predict_hzn, time_size, lookback, 
-                                dropout, n_hid_units, nlstm, ngc, weight_decay, args.Bootstrap)},
+                            'hyperparameters': (trainst, trained, testst, tested, 
+                                                train_extent, train_extent, '_'.join(adj_type), ii, 
+                                predict_hzn, time_size, lookback, n_head, 
+                                dropout, n_hid_units, nlstm, ngc, weight_decay, args.Bootstrap),
+                            'train_loss': train_loss_list,
+                            'val_loss': val_loss_list,
+                            'test_loss': test_loss_list},
                             save_dir+"_"+str(epoch)+".pt")
 
                         files = glob.glob(save_dir+"_*.pt")
@@ -427,23 +461,42 @@ if __name__ == "__main__":
                             net.load_state_dict(torch.load(f)['model_state_dict'])
 
                 if not success:
-                    print("trainig failed ", str(ii+model_offset-model_offset_2))
+                    print("Trainig failed ", str(ii+model_offset-model_offset_2))
                 else:
-                    print('finished training ', str(ii+model_offset-model_offset_2))
+                    print('Finished training ', str(ii+model_offset-model_offset_2))
 
                 hparams_dict = {'train_extent':train_extent, 'adjacency': '_'.join(adj_type), 
                                     'prediction_horizon': predict_hzn, 'time_size': time_size, 'lookback': lookback, 
                                     'dropout': dropout, 'n_hid_units': n_hid_units, 'nlstm': nlstm, 'ngc': ngc, 'weight_decay': weight_decay, 'bootstrap': args.Bootstrap,'nhead': n_head}
-                metrics_dict = {"loss_train": tr_loss/num_train, "mae_train": tr_mae, "mse_train": tr_mse, "mpiw_train": tr_mpiw, "picp_train": tr_picp,
-                                    "loss_val": val_loss/num_val, "mae_val": val_mae, "mse_val": val_mse, "mpiw_val": val_mpiw, "picp_val": val_picp,
-                                    "loss_test": test_loss/num_test, "mae_test": test_mae, "mse_test":test_mse, "mpiw_test": test_mpiw, "picp_test": test_picp}
-                writer_hp.add_hparams(hparams_dict, metrics_dict, run_name = str(lookback)+"_"+str(ii+model_offset-model_offset_2))
+                metrics_dict = {"loss_train": tr_loss/num_train, "mae_train": tr_mae, "mape_train": tr_mape, "mpiw_train": tr_mpiw, "picp_train": tr_picp,
+                                "loss_val": val_loss/num_train, "mae_val": val_mae, "mape_val": val_mape, "mpiw_val": val_mpiw, "picp_val": val_picp,
+                                "loss_test": test_loss/num_test, "mae_test": test_mae, "mape_test":test_mape, "mpiw_test": test_mpiw, "picp_test": test_picp}
+                
+                if args.Tensorboard:
+                    writer_hp.add_hparams(hparams_dict, metrics_dict, run_name = str(lookback)+"_"+str(ii+model_offset-model_offset_2))
 
+                runtime = datetime.now() - start_runtime
+                runtime = runtime.total_seconds()/60
+                
                 # Write to File
-                if not os.path.isdir(project_dir+"results/"+args.OutFolder+"_"+period+"/"):
-                    os.mkdir(project_dir+"results/"+args.OutFolder+"_"+period+"/")
-                with open(project_dir+"results/"+args.OutFolder+"_"+period+"/results.csv","a") as f:
-                    f.write("%s,%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%.2f,%d,%d,%d,%.2E,%d,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,%.2f,%.2f,%.6f,%.6f,%d\n" % 
-                                (("GAT", period, dist_save, train_extent, train_extent, '_'.join(adj_type), ii+model_offset-model_offset_2, 
+                if not os.path.isdir(project_dir+"results/"+args.OutFolder+"_"+trainst+"-"+trained+"_"+testst+"-"+tested+"/"):
+                    os.mkdir(project_dir+"results/"+args.OutFolder+"_"+trainst+"-"+trained+"_"+testst+"-"+tested+"/")
+                
+                fig, ax = plt.subplots(figsize=(4,3))
+                ax.plot(np.arange(0,epoch,5), train_loss_list, color='cornflowerblue', label='Train')
+                ax.plot(np.arange(0,epoch,5), val_loss_list, color='forestgreen', label='Validation')
+                ax.plot(np.arange(0,epoch,5), test_loss_list, color='sandybrown', label='Test')
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel("Loss")
+                ax.set_ylim([0.9*np.min(train_loss_list+val_loss_list+test_loss_list), 1.1*np.max(train_loss_list+val_loss_list+test_loss_list)])
+                ax.legend()
+                fig.savefig(project_dir+"results/"+args.OutFolder+"_"+dataset.split("_")[0]+"_"+trainst+"-"+trained+"_"+testst+"-"+tested+"/training_plots/GAT_"+dist_save+"_"+train_extent+"_"+str(ii+model_offset-model_offset_2)+"_"+str(time_size)+".png", bbox_inches='tight')
+                
+                with open(project_dir+"results/"+args.OutFolder+"_"+dataset.split("_")[0]+"_"+trainst+"-"+trained+"_"+testst+"-"+tested+"/results.csv","a") as f:
+                        f.write("%s,%s,%s,%s,%d,%d,%d,%d,%d,%.2f,%d,%d,%d,%.2E,%d,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,%.2f,%.2f,%.6f,%.6f,%.2f,%d\n" % 
+                           (("GAT", dist_save, train_extent, '_'.join(adj_type), int(ii+model_offset-model_offset_2), 
                                 predict_hzn, time_size, lookback, args.Bootstrap, 
-                                dropout, n_hid_units, nlstm, ngc, weight_decay, spatial_torch is not None) + output_string + (n_head,)))
+                                dropout, n_hid_units, nlstm, ngc, weight_decay, spatial_torch is not None) + output_string + (runtime,n_head)))
+
+
+

@@ -14,47 +14,6 @@ import torch.nn.functional as F
 import glob 
 
 
-def load_model(project_dir, save_dir, period, train_extent, adj_type, predict_hzn, time_size, lookback, ii, n_modes, n_stations, n_time, meanonly=False, homo=False):
-    if type(adj_type) == str:
-        adj_type=adj_type.replace('_', '-')
-        nadj = adj_type.count('-')+1
-    else:
-        nadj = len(adj_type)
-        adj_type='-'.join(adj_type)
-
-    file = glob.glob(save_dir+"_"+str(ii)+"_*.pt")
-    
-    if len(file) == 0:
-        print(save_dir+"_"+str(ii)+"_*.pt")
-        print("Model %d not saved." % (ii))
-        return None
-
-    try:
-        assert len(file)==1
-    except:
-        print("Multiple Files Found!")
-        for f in file:
-            print(f)
-            
-#     print(file[0])
-    saved = torch.load(file[0])
-    if len(saved['hyperparameters']) == 14:
-        (_,_,_,_,_,_,_,_,dropout,n_hid_units,nlstm,ngc,weight_decay,_) = saved['hyperparameters']
-    else:
-        (_,_,_,_,_,_,_,_,dropout,n_hid_units,nlstm,ngc,weight_decay) = saved['hyperparameters']
-
-#     print(saved['model_state_dict'].keys())
-    # assuming that meanonly and homoskedastic models will not be loaded
-    net = GAT_LSTM(meanonly=meanonly, nadj = 1, 
-           nmode=n_modes, nstation=n_stations, ntime=n_time, ndemo=0,
-           nhead=4*((ii%2)+1), nhid_g=n_hid_units, nga=ngc, nhid_l=n_hid_units, nlstm=nlstm, 
-           nhid_fc=n_hid_units, dropout=dropout, homo=homo)
-    
-    net.load_state_dict(saved['model_state_dict'])
-
-    return net
-
-
 def ensemble(project_dir, save_dir, period, predict_hzn, time_size, lookback, ensemble_model_numbers, device, train_extent, adj_type, data, adj, spatial, downtown_filter, dist='norm'):
     # only normal ensemble available
 
@@ -118,9 +77,9 @@ def calc_attention(h, adj, W, a):
 
     return attention
 
-def testset_output_gat(testloader, meanonly, homo, net, criterion, adj, demo, device, n_time, return_components=False, std=None):
+def testset_output_gat(testloader, meanonly, homo, net, criterion, adj, demo, device, n_time, return_components=False, std=None, time_size=1):
     loss = 0
-    net.eval()
+#     net.eval()
     
     for i, data in enumerate(testloader, 0):
 
@@ -132,7 +91,7 @@ def testset_output_gat(testloader, meanonly, homo, net, criterion, adj, demo, de
         batch_qod = batch_qod.view(-1,1)        
         batch_qod_onehot = torch.FloatTensor(batch_size, n_time)
         batch_qod_onehot.zero_()
-        batch_qod_onehot.scatter_(1, batch_qod-6, 1)
+        batch_qod_onehot.scatter_(1, batch_qod, 1)
         batch_x, batch_y, batch_history, batch_weather, batch_los, batch_qod_onehot = batch_x.to(device),batch_y.to(device), batch_history.to(device),batch_weather.to(device), batch_los.to(device), batch_qod_onehot.to(device)
 
         # forward
