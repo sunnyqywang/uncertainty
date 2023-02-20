@@ -1,5 +1,0 @@
-data_dir = "/home/jtl/Dropbox (MIT)/project_uncertainty_quantification/data/"
-project_data_dir = "/home/jtl/Dropbox (MIT)/project_uncertainty_quantification/data/"
-doe_data_dir = "/home/jtl/Dropbox (MIT)/DOE_TSMS/00_Data/"
-project_dir = "/home/jtl/Dropbox (MIT)/project_uncertainty_quantification/"
-model_dir = "/dreambig/qingyi/uncertainty_quantification/models/"
